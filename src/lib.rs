@@ -238,6 +238,153 @@ pub fn text_on_image_draw_debug<T: AsRef<str>>(
     );
 }
 
+/// Draws text on an image with a small cross where the coordinates are.
+pub fn text_on_image_with_background<T: AsRef<str>>(
+    image: &mut DynamicImage,
+    text: T,
+    font_bundle: &FontBundle<'_>,
+    pixels_from_left: i32,
+    pixels_from_top: i32,
+    horizontal_justify: TextJustify,
+    vertical_justify: VerticalAnchor,
+    wrap_behavior: WrapBehavior,
+    background_color: Rgba<u8>,
+) {
+    let text_width = get_text_width(font_bundle, &text);
+    let text_height = get_text_height(font_bundle) * (text.as_ref().lines().count() as i32);
+    let lines: Vec<&str> = text.as_ref().lines().map(|line| line.trim()).collect();
+
+    match wrap_behavior {
+        WrapBehavior::NoWrap => imageproc::drawing::draw_filled_rect_mut(
+            image,
+            imageproc::rect::Rect::at(
+                pixels_from_left
+                    - match horizontal_justify {
+                        TextJustify::Left => 0,
+                        TextJustify::Center => (text_width / 2) as i32,
+                        TextJustify::Right => text_width as i32,
+                    }
+                    - 10,
+                pixels_from_top
+                    - match vertical_justify {
+                        VerticalAnchor::Top => 0,
+                        VerticalAnchor::Center => text_height / 2,
+                        VerticalAnchor::Bottom => text_height,
+                    },
+            )
+            .of_size(text_width + 20, text_height as u32),
+            background_color,
+        ),
+        WrapBehavior::Wrap(max_width) => {
+            if max_width < get_text_width(font_bundle, "mm") {
+                panic!("text_on_image: Cannot set max_width for wrapping below 2 ems! Try setting max_width to at least {}", get_text_width(font_bundle, "mm"));
+            }
+            let mut lines_altered: Vec<String> = vec![];
+            for &line in &lines {
+                let mut buffer: String = String::new();
+                for word in line.split_whitespace() {
+                    if cfg!(debug_assertions) {
+                        println!(
+                            "\"{}\" has width {}. Compare to max_width {}",
+                            buffer.clone() + " " + word,
+                            get_text_width(font_bundle, buffer.clone() + " " + word),
+                            max_width
+                        );
+                    }
+                    let optional_space_width: u32 = if buffer.is_empty() {
+                        get_text_width(font_bundle, " ")
+                    } else {
+                        0
+                    };
+                    if get_text_width(font_bundle, buffer.clone() + " " + word)
+                        <= max_width + optional_space_width
+                    {
+                        //Add word to line
+                        if cfg!(debug_assertions) {
+                            println!("Word {} gets added to line", word);
+                        }
+                        if buffer.is_empty() {
+                            buffer += word;
+                        } else {
+                            buffer = buffer + " " + word;
+                        }
+                    } else if get_text_width(font_bundle, buffer.clone() + " " + word) > max_width
+                        && buffer.is_empty()
+                    {
+                        //add partial word with a dash at the end
+                        let word_chars = word.chars();
+                        for word_char in word_chars {
+                            if get_text_width(font_bundle, buffer.clone() + "-") <= max_width {
+                                buffer = buffer + &word_char.to_string();
+                            } else {
+                                buffer += "-";
+                                lines_altered.push(buffer);
+                                buffer = String::new();
+                                buffer = buffer + &word_char.to_string();
+                            }
+                        }
+                    } else if get_text_width(font_bundle, buffer.clone() + " " + word) > max_width
+                        && !buffer.is_empty()
+                    {
+                        if cfg!(debug_assertions) {
+                            println!("Word {} goes over max width && buffer is not empty.", word);
+                        }
+                        //write buffer to lines_altered, empty buffer, evaluate as new line
+                        lines_altered.push(buffer);
+                        buffer = String::new();
+                        let word_chars = word.chars();
+                        for word_char in word_chars {
+                            if get_text_width(font_bundle, buffer.clone() + "-") <= max_width {
+                                buffer = buffer + &word_char.to_string();
+                            } else {
+                                buffer += "-";
+                                lines_altered.push(buffer);
+                                buffer = String::new();
+                            }
+                        }
+                    }
+                }
+                lines_altered.push(buffer);
+            }
+            let lines_altered: Vec<&str> = lines_altered.iter().map(|line| line.as_str()).collect();
+            if cfg!(debug_assertions) {
+                println!("Lines altered:\n{:?}", lines_altered);
+            }
+            let altered_text_height = get_text_height(font_bundle) * (lines_altered.len() as i32);
+            imageproc::drawing::draw_filled_rect_mut(
+                image,
+                imageproc::rect::Rect::at(
+                    pixels_from_left
+                        - match horizontal_justify {
+                            TextJustify::Left => 0,
+                            TextJustify::Center => (max_width / 2) as i32,
+                            TextJustify::Right => max_width as i32,
+                        }
+                        - 10,
+                    pixels_from_top
+                        - match vertical_justify {
+                            VerticalAnchor::Top => 0,
+                            VerticalAnchor::Center => altered_text_height / 2,
+                            VerticalAnchor::Bottom => altered_text_height,
+                        },
+                )
+                .of_size(max_width + 20, altered_text_height as u32),
+                background_color,
+            );
+        }
+    }
+    text_on_image(
+        image,
+        text,
+        font_bundle,
+        pixels_from_left,
+        pixels_from_top,
+        horizontal_justify,
+        vertical_justify,
+        wrap_behavior,
+    );
+}
+
 fn position_and_draw(
     image: &mut DynamicImage,
     lines: Vec<&str>,
